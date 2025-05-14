@@ -1,6 +1,7 @@
 from mpmath import mp, mpf
 from .utils.rhoMath import cauchy
-
+from scipy.integrate import quad
+import numpy as np
 
 def hlt_matrix(tmax: int, alpha, e0=mpf(0), type="EXP", T=0):
     S_ = mp.matrix(tmax, tmax)
@@ -120,7 +121,34 @@ def ft_mp(e, t, sigma_, alpha, e0=mpf("0"), type="EXP", T=0, ker_type="FULLNORMG
             aux = aux * aux2 * cauchy(k, sigma_, e)
             return aux
 
-        res = mp.quad(integrand, [e0, mp.inf], method="gauss-legendre")
+        rtol_check = 1e-6
+        try:
+            # First attempt: normal tolerances
+            result1, err1 = quad(integrand, float(e0), np.inf,
+                                 limit=200, epsabs=1e-10, epsrel=1e-10)
+
+            # Sanity check
+            if not np.isfinite(result1) or result1 < 0 or err1 > 1e-6:
+                raise ValueError("Suspicious result in first attempt")
+
+            # Second attempt: higher precision (tighter tolerances)
+            result2, err2 = quad(integrand, float(e0), np.inf,
+                                 limit=300, epsabs=1e-13, epsrel=1e-13)
+
+            # Compare the two
+            rel_diff = abs(result2 - result1) / (abs(result2) + 1e-20)
+
+            if rel_diff > rtol_check:
+                raise ValueError(f"Result changed too much at higher precision: Δ = {rel_diff:.2e}")
+
+            # If all is good, accept second (more accurate) result
+            return result2
+
+        except Exception as e:
+            print(f"[SciPy fallback to mpmath] Reason: {e}")
+            return mp.quad(integrand, [e0, mp.inf], method="gauss-legendre")
+
+
     else:
         raise ValueError("Invalid smearing kernel (par.ker_type)")
     return res
@@ -252,3 +280,4 @@ def gte(T, t, e, periodicity):
         return mp.fadd(mp.exp((-T + t) * e), mp.exp(-t * e))
     if periodicity == "EXP":
         return mp.exp(-t * e)
+
